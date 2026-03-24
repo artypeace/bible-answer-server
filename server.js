@@ -70,23 +70,51 @@ Exactamente en este formato:
 {"book":50,"chapter":4,"verse":6,"context":"1-2 предложения кто написал и когда","application":"2-3 тёплых предложения связывающих стих с ситуацией","prayer":"одна короткая молитва"}`
 };
 
+// ── Рекурсивное извлечение текста из контента стиха ──────
+// bible.helloao.org возвращает сложные объекты: {type:"wj",content:[...]},
+// {type:"note",...} и т.д. — нужно рекурсивно обойти всё дерево.
+function extractVerseText(content) {
+  if (!content) return '';
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content.map(extractVerseText).filter(Boolean).join(' ');
+  }
+  if (typeof content === 'object') {
+    // Пропускаем сноски и перекрёстные ссылки — они не часть текста стиха
+    if (content.type === 'footnote' || content.type === 'cross_reference') return '';
+    if (content.content) return extractVerseText(content.content);
+    if (content.text)    return content.text;
+  }
+  return '';
+}
+
 // ── Вспомогательная функция получения стиха ───────────────
 async function getVerse(book, chapter, verse, lang) {
   const translation = TRANSLATIONS[lang] || 'BSB';
-  const bookCode = BOOK_CODES[book - 1];
+  const bookCode    = BOOK_CODES[book - 1];
+  const url = `https://bible.helloao.org/api/${translation}/${bookCode}/${chapter}.json`;
 
-  const res = await fetch(
-    `https://bible.helloao.org/api/${translation}/${bookCode}/${chapter}.json`
-  );
+  console.log(`[getVerse] book=${book} bookCode=${bookCode} chapter=${chapter} verse=${verse} lang=${lang} translation=${translation}`);
+  console.log(`[getVerse] URL: ${url}`);
+
+  const res  = await fetch(url);
   const data = await res.json();
 
   const verseObj = data.chapter?.content?.find(
     item => item.type === 'verse' && item.number === verse
   );
-  const text = verseObj?.content
-    ?.filter(c => typeof c === 'string')
-    .join(' ') || '';
 
+  if (!verseObj) {
+    const available = data.chapter?.content
+      ?.filter(c => c.type === 'verse')
+      .map(c => c.number)
+      .slice(0, 10);
+    console.warn(`[getVerse] Verse ${verse} not found. Available verse numbers:`, available);
+    return '';
+  }
+
+  const text = extractVerseText(verseObj.content).replace(/\s+/g, ' ').trim();
+  console.log(`[getVerse] Extracted: "${text.slice(0, 100)}${text.length > 100 ? '...' : ''}"`);
   return text;
 }
 
