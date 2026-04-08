@@ -177,3 +177,19 @@ test('normalizeLang accepts French variants and does not fall back to English', 
   assert.equal(normalizeLang('French'), 'fr');
   assert.equal(normalizeLang('français'), 'fr');
 });
+
+test('normalizeLang accepts Filipino variants', () => {
+  assert.equal(normalizeLang('fil'), 'fil');
+  assert.equal(normalizeLang('fil-PH'), 'fil');
+  assert.equal(normalizeLang('Filipino'), 'fil');
+  assert.equal(normalizeLang('Tagalog'), 'fil');
+  assert.equal(normalizeLang('tgl'), 'fil');
+});
+
+test('normalizeLang accepts Georgian variants', () => {
+  assert.equal(normalizeLang('ka'), 'ka');
+  assert.equal(normalizeLang('ka-GE'), 'ka');
+  assert.equal(normalizeLang('Georgian'), 'ka');
+  assert.equal(normalizeLang('kat'), 'ka');
+  assert.equal(normalizeLang('geo'), 'ka');
+});

@@ -14,6 +14,18 @@ const {
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    return res.status(400).json({
+      error: {
+        code: 'invalid_json',
+        message: 'Malformed JSON request body.'
+      }
+    });
+  }
+
+  return next(err);
+});
 
 const SERVER_STARTED_AT = new Date().toISOString();
 const SERVER_COMMIT_SHA =
@@ -28,6 +40,9 @@ function buildInfo() {
     commit: SERVER_COMMIT_SHA,
     startedAt: SERVER_STARTED_AT,
     frenchTranslation: TRANSLATIONS.fr || null,
+    filipinoTranslation: TRANSLATIONS.fil || null,
+    georgianTranslation: TRANSLATIONS.ka || null,
+    georgianUsesEnglishSourceFallback: TRANSLATIONS.ka === TRANSLATIONS.en,
     frenchPromptConfigured: Boolean(PROMPTS.fr),
     frenchBooksCount: Array.isArray(BOOKS.fr) ? BOOKS.fr.length : 0
   };
@@ -48,8 +63,8 @@ const TRANSLATIONS = {
   es:  'spa_rvg',
   ru:  'rus_syn',
   fr:  'fra_lsg',
-  fil: 'tgl_pbv',
-  ka:  'geo_geob'
+  fil: 'tgl_ulb',
+  ka:  'BSB' // TODO: Replace English fallback with verified Georgian Bible translation/source when available.
 };
 
 // ── Коды книг (1-66 → трёхбуквенный код) ─────────────────
@@ -146,25 +161,208 @@ const RETRY_PROMPTS = {
   ka:  'წინა პასუხი ვერ გარდაიქმნა მუხლად. დააბრუნე მხოლოდ ერთი raw JSON ობიექტი numeric book, chapter და verse ველებით. აირჩიე მუხლი რომელიც არსებობს მოთხოვნილ თარგმანში.'
 };
 
+class AppHttpError extends Error {
+  constructor(status, code, message, details = null) {
+    super(message);
+    this.name = 'AppHttpError';
+    this.status = status;
+    this.code = code;
+    this.details = details;
+  }
+}
+
+function buildErrorPayload(error, fallbackMessage = 'Unexpected server error.') {
+  const message = collapseWhitespace(error?.message || fallbackMessage);
+  const payload = {
+    error: {
+      code: error?.code || 'internal_error',
+      message
+    }
+  };
+
+  if (error?.details && typeof error.details === 'object' && Object.keys(error.details).length > 0) {
+    payload.error.details = error.details;
+  }
+
+  return payload;
+}
+
+function sendJsonError(res, error, fallbackMessage) {
+  const status = Number.isInteger(error?.status) ? error.status : 500;
+  return res.status(status).json(buildErrorPayload(error, fallbackMessage));
+}
+
+function resolveTranslationConfig(lang) {
+  if (lang === 'ka') {
+    return {
+      translation: TRANSLATIONS.ka,
+      sourceLang: 'en',
+      fallbackCode: 'georgian_translation_fallback',
+      fallbackMessage: 'Replace English fallback with verified Georgian Bible translation/source when available.'
+    };
+  }
+
+  if (TRANSLATIONS[lang]) {
+    return {
+      translation: TRANSLATIONS[lang],
+      sourceLang: lang,
+      fallbackCode: null,
+      fallbackMessage: null
+    };
+  }
+
+  return {
+    translation: TRANSLATIONS.en,
+    sourceLang: 'en',
+    fallbackCode: 'unmapped_translation_fallback',
+    fallbackMessage: `No translation mapping configured for lang "${lang}". Falling back to English translation.`
+  };
+}
+
+function logLanguageResolution(route, requestedLang, lang, translationConfig) {
+  console.log(`[${route}] Incoming payload: ${JSON.stringify({ lang: requestedLang })}`);
+  console.log(`[${route}] Normalized lang: ${lang}`);
+
+  if (requestedLang && requestedLang !== lang) {
+    console.log(`[${route}] Lang normalized from "${requestedLang}" to "${lang}"`);
+  }
+
+  console.log(`[${route}] Resolved translation: ${translationConfig.translation}`);
+
+  if (translationConfig.fallbackCode) {
+    console.warn(
+      `[${route}] Translation fallback active: code=${translationConfig.fallbackCode} sourceLang=${translationConfig.sourceLang} message="${translationConfig.fallbackMessage}"`
+    );
+  }
+}
+
+function looksLikeHtml(bodyText, contentType) {
+  const normalizedType = String(contentType || '').toLowerCase();
+  const normalizedBody = collapseWhitespace(bodyText).toLowerCase();
+  return normalizedType.includes('text/html')
+    || normalizedBody.startsWith('<!doctype html')
+    || normalizedBody.startsWith('<html');
+}
+
+function looksLikeJson(bodyText, contentType) {
+  const normalizedType = String(contentType || '').toLowerCase();
+  const trimmed = typeof bodyText === 'string' ? bodyText.trim() : '';
+
+  if (normalizedType.includes('application/json') || normalizedType.includes('text/json')) {
+    return true;
+  }
+
+  return trimmed.startsWith('{') || trimmed.startsWith('[');
+}
+
 // ── Вспомогательная функция получения стиха ───────────────
 async function getPassageText({ book, chapter, verseStart, verseEnd, lang }) {
-  const translation = TRANSLATIONS[lang] || 'BSB';
-  if (!TRANSLATIONS[lang]) {
-    console.warn(`[getPassageText] No translation mapping for lang="${lang}", falling back to BSB`);
+  const translationConfig = resolveTranslationConfig(lang);
+  const { translation, sourceLang, fallbackCode } = translationConfig;
+  const bookCode = BOOK_CODES[book - 1];
+
+  if (!bookCode) {
+    throw new AppHttpError(400, 'invalid_book', `Invalid Bible book index: ${book}`, {
+      book,
+      chapter,
+      verseStart,
+      verseEnd,
+      lang
+    });
   }
-  const bookCode    = BOOK_CODES[book - 1];
+
   const url = `https://bible.helloao.org/api/${translation}/${bookCode}/${chapter}.json`;
 
   console.log(
-    `[getPassageText] book=${book} bookCode=${bookCode} chapter=${chapter} verse=${verseStart}-${verseEnd} lang=${lang} translation=${translation}`
+    `[getPassageText] book=${book} bookCode=${bookCode} chapter=${chapter} verse=${verseStart}-${verseEnd} lang=${lang} sourceLang=${sourceLang} translation=${translation}`
   );
   console.log(`[getPassageText] URL: ${url}`);
-
-  const res  = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`Bible API error ${res.status} for ${bookCode} ${chapter}`);
+  if (fallbackCode) {
+    console.warn(`[getPassageText] Translation fallback active: ${fallbackCode}`);
   }
-  const data = await res.json();
+
+  let res;
+  let rawBody = '';
+  let contentType = '';
+
+  try {
+    res = await fetch(url);
+    contentType = res.headers.get('content-type') || '';
+    rawBody = await res.text();
+  } catch (error) {
+    throw new AppHttpError(
+      502,
+      'bible_source_request_failed',
+      `Failed to reach Bible source for translation "${translation}".`,
+      {
+        lang,
+        sourceLang,
+        translation,
+        bookCode,
+        chapter,
+        verseStart,
+        verseEnd,
+        cause: collapseWhitespace(error?.message)
+      }
+    );
+  }
+
+  console.log(`[getPassageText] Response status=${res.status} contentType=${contentType || 'unknown'}`);
+  console.log(`[getPassageText] Raw body preview: "${previewForLog(rawBody, 160)}"`);
+
+  if (!res.ok) {
+    throw new AppHttpError(
+      502,
+      'bible_source_unavailable',
+      `Bible source unavailable for translation "${translation}".`,
+      {
+        lang,
+        sourceLang,
+        translation,
+        upstreamStatus: res.status,
+        contentType,
+        bodyPreview: previewForLog(rawBody, 160),
+        url
+      }
+    );
+  }
+
+  if (!looksLikeJson(rawBody, contentType) || looksLikeHtml(rawBody, contentType)) {
+    throw new AppHttpError(
+      502,
+      'bible_source_invalid_response',
+      'Bible source returned a non-JSON response.',
+      {
+        lang,
+        sourceLang,
+        translation,
+        contentType,
+        bodyPreview: previewForLog(rawBody, 160),
+        url
+      }
+    );
+  }
+
+  let data;
+  try {
+    data = JSON.parse(rawBody);
+  } catch (error) {
+    throw new AppHttpError(
+      502,
+      'bible_source_invalid_json',
+      'Bible source returned invalid JSON.',
+      {
+        lang,
+        sourceLang,
+        translation,
+        contentType,
+        bodyPreview: previewForLog(rawBody, 160),
+        cause: collapseWhitespace(error?.message),
+        url
+      }
+    );
+  }
+
   const { text, missing } = extractPassageTextFromChapterData(data, verseStart, verseEnd);
 
   if (missing.length > 0) {
@@ -238,25 +436,24 @@ async function requestModelSelection({ query, lang, attempt, previousRawText }) 
 app.post('/ask', async (req, res) => {
   const { query, lang: requestedLang } = req.body;
   const lang = normalizeLang(requestedLang);
+  const translationConfig = resolveTranslationConfig(lang);
   if (!query?.trim()) {
-    return res.status(400).json({ error: 'Query is required' });
+    return res.status(400).json({
+      error: {
+        code: 'query_required',
+        message: 'Query is required.'
+      }
+    });
   }
 
   try {
     console.log(`[ask] Incoming payload: ${JSON.stringify({ query, lang: requestedLang })}`);
-    console.log(`[ask] Normalized lang: ${lang}`);
-    if (requestedLang && requestedLang !== lang) {
-      console.log(`[ask] Lang normalized from "${requestedLang}" to "${lang}"`);
-    }
-    if (requestedLang && normalizeLang(requestedLang) === 'en' && requestedLang !== 'en') {
-      console.warn(`[ask] Requested lang "${requestedLang}" normalized to "en" (fallback).`);
-    }
-    console.log(`[ask] Resolved translation: ${TRANSLATIONS[lang] || 'BSB'}`);
+    logLanguageResolution('ask', requestedLang, lang, translationConfig);
 
     const response = await buildAskResponse({
       query,
       lang,
-      translation: TRANSLATIONS[lang] || 'BSB',
+      translation: translationConfig.translation,
       books: BOOKS,
       logger: console,
       selectAnswer: requestModelSelection,
@@ -275,8 +472,8 @@ app.post('/ask', async (req, res) => {
     res.json(response);
 
   } catch (err) {
-    console.error('Error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[ask] Error:', err);
+    return sendJsonError(res, err, 'Failed to produce a Bible answer.');
   }
 });
 
@@ -284,15 +481,8 @@ app.post('/ask', async (req, res) => {
 app.get('/verse-of-day', async (req, res) => {
   const requestedLang = req.query.lang;
   const lang = normalizeLang(requestedLang);
-  console.log(`[verse-of-day] Incoming payload: ${JSON.stringify({ lang: requestedLang })}`);
-  console.log(`[verse-of-day] Normalized lang: ${lang}`);
-  if (requestedLang && requestedLang !== lang) {
-    console.log(`[verse-of-day] Lang normalized from "${requestedLang}" to "${lang}"`);
-  }
-  if (requestedLang && normalizeLang(requestedLang) === 'en' && requestedLang !== 'en') {
-    console.warn(`[verse-of-day] Requested lang "${requestedLang}" normalized to "en" (fallback).`);
-  }
-  console.log(`[verse-of-day] Resolved translation: ${TRANSLATIONS[lang] || 'BSB'}`);
+  const translationConfig = resolveTranslationConfig(lang);
+  logLanguageResolution('verse-of-day', requestedLang, lang, translationConfig);
 
   // 30 popular verses — one per day, cycles monthly
   const DAILY = [
@@ -353,10 +543,10 @@ app.get('/verse-of-day', async (req, res) => {
       verse:       verseText,
       reference:   `${bookName} ${chapter}:${verse}`,
       tagline,
-      translation: TRANSLATIONS[lang] || 'BSB'
+      translation: translationConfig.translation
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return sendJsonError(res, err, 'Failed to fetch verse of the day.');
   }
 });
 
@@ -369,26 +559,36 @@ app.get('/debug/build', (_req, res) => {
 app.get('/debug/verse', async (req, res) => {
   const requestedLang = req.query.lang;
   const lang = normalizeLang(requestedLang);
+  const translationConfig = resolveTranslationConfig(lang);
   const book = Number(req.query.book);
   const chapter = Number(req.query.chapter);
   const verseStart = Number(req.query.verseStart ?? req.query.verse);
   const verseEnd = Number(req.query.verseEnd ?? req.query.verse ?? req.query.verseStart);
 
   if (!Number.isInteger(book) || !Number.isInteger(chapter) || !Number.isInteger(verseStart)) {
-    return res.status(400).json({ error: 'book, chapter, and verse are required numeric params.' });
+    return res.status(400).json({
+      error: {
+        code: 'invalid_debug_params',
+        message: 'book, chapter, and verse are required numeric params.'
+      }
+    });
   }
 
   const bookCode = BOOK_CODES[book - 1];
   if (!bookCode) {
-    return res.status(400).json({ error: 'Invalid book index (1-66).' });
+    return res.status(400).json({
+      error: {
+        code: 'invalid_book',
+        message: 'Invalid book index (1-66).'
+      }
+    });
   }
 
-  const translation = TRANSLATIONS[lang] || 'BSB';
+  const translation = translationConfig.translation;
   const url = `https://bible.helloao.org/api/${translation}/${bookCode}/${chapter}.json`;
 
   console.log(`[debug/verse] Incoming payload: ${JSON.stringify({ lang: requestedLang, book, chapter, verseStart, verseEnd })}`);
-  console.log(`[debug/verse] Normalized lang: ${lang}`);
-  console.log(`[debug/verse] Resolved translation: ${translation}`);
+  logLanguageResolution('debug/verse', requestedLang, lang, translationConfig);
   console.log(`[debug/verse] URL: ${url}`);
 
   try {
@@ -404,25 +604,46 @@ app.get('/debug/verse', async (req, res) => {
       requestedLang,
       normalizedLang: lang,
       translation,
+      sourceLang: translationConfig.sourceLang,
       url,
       verseTextPreview: previewForLog(text, 120),
       verseTextLength: text.length
     });
   } catch (err) {
-    console.error(`[debug/verse] Error: ${err.message}`);
-    return res.status(500).json({
-      error: err.message,
-      requestedLang,
-      normalizedLang: lang,
-      translation,
-      url
-    });
+    console.error('[debug/verse] Error:', err);
+    return sendJsonError(res, new AppHttpError(
+      Number.isInteger(err?.status) ? err.status : 500,
+      err?.code || 'debug_verse_failed',
+      err?.message || 'Debug verse lookup failed.',
+      {
+        ...(err?.details || {}),
+        requestedLang,
+        normalizedLang: lang,
+        translation,
+        sourceLang: translationConfig.sourceLang,
+        url
+      }
+    ));
   }
 });
 
 // ── GET / — health check ──────────────────────────────────
 app.get('/', (req, res) => {
   res.json({ status: '✝️ Bible Answer API is running' });
+});
+
+app.use((req, res) => {
+  return res.status(404).json({
+    error: {
+      code: 'not_found',
+      message: 'Route not found.'
+    }
+  });
+});
+
+app.use((err, req, res, next) => {
+  console.error('[server] Unhandled error:', err);
+  return sendJsonError(res, err, 'Unexpected server error.');
 });
 
 app.listen(process.env.PORT || 3000, () => {
