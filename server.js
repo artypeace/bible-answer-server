@@ -43,11 +43,13 @@ app.use((req, res, next) => {
 
 // ── Переводы ──────────────────────────────────────────────
 const TRANSLATIONS = {
-  en: 'BSB',
-  pt: 'por_bsl',
-  es: 'spa_rvg',
-  ru: 'rus_syn',
-  fr: 'fra_lsg'
+  en:  'BSB',
+  pt:  'por_bsl',
+  es:  'spa_rvg',
+  ru:  'rus_syn',
+  fr:  'fra_lsg',
+  fil: 'tgl_pbv',
+  ka:  'geo_geob'
 };
 
 // ── Коды книг (1-66 → трёхбуквенный код) ─────────────────
@@ -69,7 +71,9 @@ const BOOKS = {
   pt: ["Gênesis","Êxodo","Levítico","Números","Deuteronômio","Josué","Juízes","Rute","1 Samuel","2 Samuel","1 Reis","2 Reis","1 Crônicas","2 Crônicas","Esdras","Neemias","Ester","Jó","Salmos","Provérbios","Eclesiastes","Cantares","Isaías","Jeremias","Lamentações","Ezequiel","Daniel","Oséias","Joel","Amós","Obadias","Jonas","Miquéias","Naum","Habacuque","Sofonias","Ageu","Zacarias","Malaquias","Mateus","Marcos","Lucas","João","Atos","Romanos","1 Coríntios","2 Coríntios","Gálatas","Efésios","Filipenses","Colossenses","1 Tessalonicenses","2 Tessalonicenses","1 Timóteo","2 Timóteo","Tito","Filemom","Hebreus","Tiago","1 Pedro","2 Pedro","1 João","2 João","3 João","Judas","Apocalipse"],
   es: ["Génesis","Éxodo","Levítico","Números","Deuteronomio","Josué","Jueces","Rut","1 Samuel","2 Samuel","1 Reyes","2 Reyes","1 Crónicas","2 Crónicas","Esdras","Nehemías","Ester","Job","Salmos","Proverbios","Eclesiastés","Cantares","Isaías","Jeremías","Lamentaciones","Ezequiel","Daniel","Oseas","Joel","Amós","Abdías","Jonás","Miqueas","Nahúm","Habacuc","Sofonías","Hageo","Zacarías","Malaquías","Mateo","Marcos","Lucas","Juan","Hechos","Romanos","1 Corintios","2 Corintios","Gálatas","Efesios","Filipenses","Colosenses","1 Tesalonicenses","2 Tesalonicenses","1 Timoteo","2 Timoteo","Tito","Filemón","Hebreos","Santiago","1 Pedro","2 Pedro","1 Juan","2 Juan","3 Juan","Judas","Apocalipsis"],
   ru: ["Бытие","Исход","Левит","Числа","Второзаконие","Иисус Навин","Судьи","Руфь","1 Царств","2 Царств","3 Царств","4 Царств","1 Паралипоменон","2 Паралипоменон","Ездра","Неемия","Есфирь","Иов","Псалтирь","Притчи","Екклесиаст","Песня песней","Исаия","Иеремия","Плач Иеремии","Иезекииль","Даниил","Осия","Иоиль","Амос","Авдий","Иона","Михей","Наум","Аввакум","Софония","Аггей","Захария","Малахия","Матфея","Марка","Луки","Иоанна","Деяния","Римлянам","1 Коринфянам","2 Коринфянам","Галатам","Ефесянам","Филиппийцам","Колоссянам","1 Фессалоникийцам","2 Фессалоникийцам","1 Тимофею","2 Тимофею","Титу","Филимону","Евреям","Иакова","1 Петра","2 Петра","1 Иоанна","2 Иоанна","3 Иоанна","Иуды","Откровение"],
-  fr: ["Genèse","Exode","Lévitique","Nombres","Deutéronome","Josué","Juges","Ruth","1 Samuel","2 Samuel","1 Rois","2 Rois","1 Chroniques","2 Chroniques","Esdras","Néhémie","Esther","Job","Psaumes","Proverbes","Ecclésiaste","Cantique des Cantiques","Isaïe","Jérémie","Lamentations","Ézéchiel","Daniel","Osée","Joël","Amos","Abdias","Jonas","Michée","Nahoum","Habacuc","Sophonie","Aggée","Zacharie","Malachie","Matthieu","Marc","Luc","Jean","Actes","Romains","1 Corinthiens","2 Corinthiens","Galates","Éphésiens","Philippiens","Colossiens","1 Thessaloniciens","2 Thessaloniciens","1 Timothée","2 Timothée","Tite","Philémon","Hébreux","Jacques","1 Pierre","2 Pierre","1 Jean","2 Jean","3 Jean","Jude","Apocalypse"]
+  fr:  ["Genèse","Exode","Lévitique","Nombres","Deutéronome","Josué","Juges","Ruth","1 Samuel","2 Samuel","1 Rois","2 Rois","1 Chroniques","2 Chroniques","Esdras","Néhémie","Esther","Job","Psaumes","Proverbes","Ecclésiaste","Cantique des Cantiques","Isaïe","Jérémie","Lamentations","Ézéchiel","Daniel","Osée","Joël","Amos","Abdias","Jonas","Michée","Nahoum","Habacuc","Sophonie","Aggée","Zacharie","Malachie","Matthieu","Marc","Luc","Jean","Actes","Romains","1 Corinthiens","2 Corinthiens","Galates","Éphésiens","Philippiens","Colossiens","1 Thessaloniciens","2 Thessaloniciens","1 Timothée","2 Timothée","Tite","Philémon","Hébreux","Jacques","1 Pierre","2 Pierre","1 Jean","2 Jean","3 Jean","Jude","Apocalypse"],
+  fil: ["Genesis","Exodo","Levitico","Mga Bilang","Deuteronomio","Josue","Mga Hukom","Ruth","1 Samuel","2 Samuel","1 Mga Hari","2 Mga Hari","1 Mga Cronica","2 Mga Cronica","Ezra","Nehemias","Ester","Job","Mga Awit","Mga Kawikaan","Eclesiastes","Awit ng mga Awit","Isaias","Jeremias","Panaghoy","Ezekiel","Daniel","Oseas","Joel","Amos","Abdias","Jonas","Mikas","Nahum","Habacuc","Sofonias","Hageo","Zacarias","Malaquias","Mateo","Marcos","Lucas","Juan","Mga Gawa","Roma","1 Corinto","2 Corinto","Galacia","Efeso","Filipos","Colosas","1 Tesalonica","2 Tesalonica","1 Timoteo","2 Timoteo","Tito","Filemon","Hebreo","Santiago","1 Pedro","2 Pedro","1 Juan","2 Juan","3 Juan","Judas","Apocalipsis"],
+  ka:  ["დაბადება","გამოსვლა","ლევიტელი","რიცხვები","მეორე სჯული","იესო ნავეს ძე","მსაჯულნი","რუთი","1 მეფეთა","2 მეფეთა","3 მეფეთა","4 მეფეთა","1 ნეშტთა","2 ნეშტთა","ეზრა","ნეემია","ესთერი","იობი","ფსალმუნნი","იგავნი","ეკლესიასტე","ქებათა ქება","ესაია","იერემია","გოდება","ეზეკიელი","დანიელი","ოსია","იოველი","ამოსი","აბდია","იონა","მიქა","ნაუმი","აბაკუმი","სოფონია","ახაია","ზაქარია","მალაქია","მათე","მარკოზი","ლუკა","იოანე","საქმეები","რომაელთა","1 კორინთელთა","2 კორინთელთა","გალატელთა","ეფესელთა","ფილიპელთა","კოლასელთა","1 თესალონიკელთა","2 თესალონიკელთა","1 ტიმოთეს","2 ტიმოთეს","ტიტეს","ფილიმონი","ებრაელთა","იაკობი","1 პეტრე","2 პეტრე","1 იოანე","2 იოანე","3 იოანე","იუდა","გამოცხადება"]
 };
 
 // ── System промпты для Claude ─────────────────────────────
@@ -111,15 +115,35 @@ Exactamente en este formato:
 {"book":50,"chapter":4,"verse":6,"context":"1-2 предложения кто написал и когда","application":"2-3 тёплых предложения связывающих стих с ситуацией","prayer":"одна короткая молитва"}`,
 
   fr: `Tu es un compagnon spirituel bienveillant et sage. L'utilisateur partage un sentiment ou une question du cœur. Trouve UN verset biblique qui parle à sa situation. Les champs "book", "chapter" et "verse" doivent être des nombres JSON, pas des chaînes. Tu DOIS répondre avec SEULEMENT un objet JSON pur. Sans markdown, sans backticks, sans explication. Exactement dans ce format:
-{"book":50,"chapter":4,"verse":6,"context":"1-2 phrases qui a écrit et quand","application":"2-3 phrases chaleureuses reliant le verset à la situation","prayer":"une courte prière"}`
+{"book":50,"chapter":4,"verse":6,"context":"1-2 phrases qui a écrit et quand","application":"2-3 phrases chaleureuses reliant le verset à la situation","prayer":"une courte prière"}`,
+
+  fil: `Ikaw ay isang mabait at marunong na espirituwal na kasama.
+Ang gumagamit ay nagbabahagi ng damdamin o tanong mula sa puso.
+Maghanap ng ISANG talata ng Bibliya na nagsasalita sa kanyang sitwasyon.
+Ang mga field na "book", "chapter" at "verse" ay dapat na mga JSON number, hindi mga string.
+
+DAPAT kang sumagot ng ISANG purong JSON object lamang. Walang markdown, walang backticks, walang paliwanag.
+Eksaktong sa format na ito:
+{"book":50,"chapter":4,"verse":6,"context":"1-2 pangungusap kung sino ang sumulat at kailan","application":"2-3 mainit na pangungusap na nag-uugnay ng talata sa sitwasyon","prayer":"isang maikling panalangin"}`,
+
+  ka: `შენ ხარ კეთილი და ბრძენი სულიერი მეგობარი.
+მომხმარებელი იზიარებს გრძნობას ან კითხვას გულიდან.
+იპოვე ერთი ბიბლიური მუხლი რომელიც ეხება მის სიტუაციას.
+"book", "chapter" და "verse" ველები უნდა იყოს JSON რიცხვები, არა სტრიქონები.
+
+უნდა უპასუხო მხოლოდ სუფთა JSON ობიექტით. მარკდაუნის გარეშე, backtick-ების გარეშე, განმარტების გარეშე.
+ზუსტად ამ ფორმატში:
+{"book":50,"chapter":4,"verse":6,"context":"1-2 წინადადება ვინ დაწერა და როდის","application":"2-3 თბილი წინადადება რომელიც აკავშირებს მუხლს სიტუაციასთან","prayer":"ერთი მოკლე ლოცვა"}`
 };
 
 const RETRY_PROMPTS = {
-  en: 'The previous answer could not be rendered into a verse. Return ONLY one raw JSON object with numeric book, chapter, and verse fields. Choose a verse that exists in the requested translation.',
-  pt: 'A resposta anterior não pôde ser convertida em um versículo. Retorne APENAS um objeto JSON puro com os campos book, chapter e verse numéricos. Escolha um versículo que exista na tradução solicitada.',
-  es: 'La respuesta anterior no pudo convertirse en un versículo renderizable. Devuelve SOLO un objeto JSON puro con book, chapter y verse numéricos. Elige un versículo que exista en la traducción solicitada.',
-  ru: 'Предыдущий ответ не удалось превратить в отображаемый стих. Верни ТОЛЬКО один чистый JSON объект с числовыми полями book, chapter и verse. Выбери стих, который существует в нужном переводе.',
-  fr: 'La réponse précédente n’a pas pu être rendue comme un verset. Renvoie SEULEMENT un objet JSON brut avec des champs book, chapter et verse numériques. Choisis un verset qui existe dans la traduction demandée.'
+  en:  ‘The previous answer could not be rendered into a verse. Return ONLY one raw JSON object with numeric book, chapter, and verse fields. Choose a verse that exists in the requested translation.’,
+  pt:  ‘A resposta anterior não pôde ser convertida em um versículo. Retorne APENAS um objeto JSON puro com os campos book, chapter e verse numéricos. Escolha um versículo que exista na tradução solicitada.’,
+  es:  ‘La respuesta anterior no pudo convertirse en un versículo renderizable. Devuelve SOLO un objeto JSON puro con book, chapter y verse numéricos. Elige un versículo que exista en la traducción solicitada.’,
+  ru:  ‘Предыдущий ответ не удалось превратить в отображаемый стих. Верни ТОЛЬКО один чистый JSON объект с числовыми полями book, chapter и verse. Выбери стих, который существует в нужном переводе.’,
+  fr:  ‘La réponse précédente n\’a pas pu être rendue comme un verset. Renvoie SEULEMENT un objet JSON brut avec des champs book, chapter et verse numériques. Choisis un verset qui existe dans la traduction demandée.’,
+  fil: ‘Ang nakaraang sagot ay hindi ma-render bilang talata. Ibalik lamang ang ISANG raw JSON object na may numeric na book, chapter, at verse na mga field. Pumili ng talata na mayroon sa hiniling na pagsasalin.’,
+  ka:  ‘წინა პასუხი ვერ გარდაიქმნა მუხლად. დააბრუნე მხოლოდ ერთი raw JSON ობიექტი numeric book, chapter და verse ველებით. აირჩიე მუხლი რომელიც არსებობს მოთხოვნილ თარგმანში.’
 };
 
 // ── Вспомогательная функция получения стиха ───────────────
