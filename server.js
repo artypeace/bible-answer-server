@@ -137,13 +137,13 @@ Eksaktong sa format na ito:
 };
 
 const RETRY_PROMPTS = {
-  en:  ‘The previous answer could not be rendered into a verse. Return ONLY one raw JSON object with numeric book, chapter, and verse fields. Choose a verse that exists in the requested translation.’,
-  pt:  ‘A resposta anterior não pôde ser convertida em um versículo. Retorne APENAS um objeto JSON puro com os campos book, chapter e verse numéricos. Escolha um versículo que exista na tradução solicitada.’,
-  es:  ‘La respuesta anterior no pudo convertirse en un versículo renderizable. Devuelve SOLO un objeto JSON puro con book, chapter y verse numéricos. Elige un versículo que exista en la traducción solicitada.’,
-  ru:  ‘Предыдущий ответ не удалось превратить в отображаемый стих. Верни ТОЛЬКО один чистый JSON объект с числовыми полями book, chapter и verse. Выбери стих, который существует в нужном переводе.’,
-  fr:  ‘La réponse précédente n\’a pas pu être rendue comme un verset. Renvoie SEULEMENT un objet JSON brut avec des champs book, chapter et verse numériques. Choisis un verset qui existe dans la traduction demandée.’,
-  fil: ‘Ang nakaraang sagot ay hindi ma-render bilang talata. Ibalik lamang ang ISANG raw JSON object na may numeric na book, chapter, at verse na mga field. Pumili ng talata na mayroon sa hiniling na pagsasalin.’,
-  ka:  ‘წინა პასუხი ვერ გარდაიქმნა მუხლად. დააბრუნე მხოლოდ ერთი raw JSON ობიექტი numeric book, chapter და verse ველებით. აირჩიე მუხლი რომელიც არსებობს მოთხოვნილ თარგმანში.’
+  en:  'The previous answer could not be rendered into a verse. Return ONLY one raw JSON object with numeric book, chapter, and verse fields. Choose a verse that exists in the requested translation.',
+  pt:  'A resposta anterior não pôde ser convertida em um versículo. Retorne APENAS um objeto JSON puro com os campos book, chapter e verse numéricos. Escolha um versículo que exista na tradução solicitada.',
+  es:  'La respuesta anterior no pudo convertirse en un versículo renderizable. Devuelve SOLO un objeto JSON puro con book, chapter y verse numéricos. Elige un versículo que exista en la traducción solicitada.',
+  ru:  'Предыдущий ответ не удалось превратить в отображаемый стих. Верни ТОЛЬКО один чистый JSON объект с числовыми полями book, chapter и verse. Выбери стих, который существует в нужном переводе.',
+  fr:  'La réponse précédente n\'a pas pu être rendue comme un verset. Renvoie SEULEMENT un objet JSON brut avec des champs book, chapter et verse numériques. Choisis un verset qui existe dans la traduction demandée.',
+  fil: 'Ang nakaraang sagot ay hindi ma-render bilang talata. Ibalik lamang ang ISANG raw JSON object na may numeric na book, chapter, at verse na mga field. Pumili ng talata na mayroon sa hiniling na pagsasalin.',
+  ka:  'წინა პასუხი ვერ გარდაიქმნა მუხლად. დააბრუნე მხოლოდ ერთი raw JSON ობიექტი numeric book, chapter და verse ველებით. აირჩიე მუხლი რომელიც არსებობს მოთხოვნილ თარგმანში.'
 };
 
 // ── Вспомогательная функция получения стиха ───────────────
