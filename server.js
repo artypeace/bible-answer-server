@@ -394,8 +394,11 @@ function buildUserMessage(query, lang, attempt, previousRawText) {
 
 async function requestModelSelection({ query, lang, attempt, previousRawText }) {
   const modelRequest = {
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-5',
     max_tokens: 1024,
+    // Sonnet 5 runs adaptive thinking by default; disable it so the small
+    // max_tokens budget goes entirely to the JSON answer and latency stays low.
+    thinking: { type: 'disabled' },
     system: PROMPTS[lang] || PROMPTS.en,
     messages: [{
       role: 'user',
