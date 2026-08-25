@@ -648,12 +648,15 @@ const LANGUAGE_NAMES = {
   fil: 'Filipino (Tagalog)'
 };
 
-function buildInterpretPrompt(lang) {
+function buildInterpretPrompt(lang, scope) {
   const languageName = LANGUAGE_NAMES[lang] || LANGUAGE_NAMES.en;
+  const subject = scope === 'chapter'
+    ? `Given a whole chapter of the Bible, produce three distinct readings of it as a single movement — what the chapter as a whole is doing, not a verse-by-verse walk`
+    : `Given one Bible verse, produce three distinct readings of it`;
 
   return `You are a thoughtful guide to Scripture, writing for a contemplative reader.
 
-Given one Bible verse, produce three distinct readings of it. Write every field in ${languageName}.
+${subject}. Write every field in ${languageName}.
 
 "theological" — The historical-grammatical reading. Who wrote this, to whom, in what situation, and what it meant to its first hearers. Ground it in the text and its context. 2-4 sentences.
 
@@ -669,6 +672,7 @@ app.post('/interpret', async (req, res) => {
   try {
     const { reference, verseText } = req.body || {};
     const lang = normalizeLang(req.body?.lang);
+    const scope = req.body?.scope === 'chapter' ? 'chapter' : 'verse';
 
     if (!reference || !verseText) {
       return res.status(400).json({
@@ -678,16 +682,16 @@ app.post('/interpret', async (req, res) => {
 
     const modelRequest = {
       model: 'claude-sonnet-5',
-      max_tokens: 1400,
+      max_tokens: scope === 'chapter' ? 2000 : 1400,
       thinking: { type: 'disabled' },
-      system: buildInterpretPrompt(lang),
+      system: buildInterpretPrompt(lang, scope),
       messages: [{
         role: 'user',
-        content: `${reference}\n\n"${collapseWhitespace(String(verseText)).slice(0, 1500)}"`
+        content: `${reference}\n\n"${collapseWhitespace(String(verseText)).slice(0, scope === 'chapter' ? 12000 : 1500)}"`
       }]
     };
 
-    console.log(`[interpret] ${reference} lang=${lang}`);
+    console.log(`[interpret] ${reference} lang=${lang} scope=${scope}`);
 
     const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
