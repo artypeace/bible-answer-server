@@ -630,6 +630,107 @@ app.get('/debug/verse', async (req, res) => {
   }
 });
 
+// ── POST /interpret ───────────────────────────────────────
+// Returns all three interpretive "lenses" for a verse in one model call.
+// Doing it in a single request is ~3x cheaper than one call per lens, and it
+// lets the app switch between lenses instantly with no further network work.
+//
+// Unlike /ask, this uses one English meta-prompt with a target-language
+// instruction rather than six hand-maintained prompts: three lenses across six
+// languages would be eighteen prompts to keep in sync, and Claude writes the
+// target language reliably from an instruction.
+const LANGUAGE_NAMES = {
+  en:  'English',
+  ru:  'Russian',
+  es:  'Spanish',
+  pt:  'Portuguese',
+  fr:  'French',
+  fil: 'Filipino (Tagalog)'
+};
+
+function buildInterpretPrompt(lang) {
+  const languageName = LANGUAGE_NAMES[lang] || LANGUAGE_NAMES.en;
+
+  return `You are a thoughtful guide to Scripture, writing for a contemplative reader.
+
+Given one Bible verse, produce three distinct readings of it. Write every field in ${languageName}.
+
+"theological" — The historical-grammatical reading. Who wrote this, to whom, in what situation, and what it meant to its first hearers. Ground it in the text and its context. 2-4 sentences.
+
+"symbolic" — The inner or allegorical reading, in the tradition of Philo, Origen and the Church Fathers: the passage as a map of the soul. Characters and places may stand for faculties, impulses or states within a person. For example, Cain and Abel read this way is not only about envy between brothers, but about the calculating mind and the trusting heart within one person. Be concrete about what stands for what. Never invent occult or fortune-telling content — this is a literary and psychological reading, not divination. 2-4 sentences.
+
+"application" — What this asks of the reader today. Warm, direct, second person. Do not be preachy or generic. 2-3 sentences.
+
+Reply with ONLY a raw JSON object, no markdown, no backticks:
+{"theological":"...","symbolic":"...","application":"..."}`;
+}
+
+app.post('/interpret', async (req, res) => {
+  try {
+    const { reference, verseText } = req.body || {};
+    const lang = normalizeLang(req.body?.lang);
+
+    if (!reference || !verseText) {
+      return res.status(400).json({
+        error: { code: 'invalid_request', message: 'reference and verseText are required.' }
+      });
+    }
+
+    const modelRequest = {
+      model: 'claude-sonnet-5',
+      max_tokens: 1400,
+      thinking: { type: 'disabled' },
+      system: buildInterpretPrompt(lang),
+      messages: [{
+        role: 'user',
+        content: `${reference}\n\n"${collapseWhitespace(String(verseText)).slice(0, 1500)}"`
+      }]
+    };
+
+    console.log(`[interpret] ${reference} lang=${lang}`);
+
+    const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify(modelRequest)
+    });
+
+    const claudeData = await claudeRes.json();
+
+    if (!claudeRes.ok) {
+      const apiMessage = collapseWhitespace(
+        claudeData?.error?.message || claudeData?.message || JSON.stringify(claudeData)
+      );
+      throw new Error(`Anthropic API error ${claudeRes.status}: ${apiMessage}`);
+    }
+
+    const rawText = extractClaudeText(claudeData);
+    let parsed;
+    try {
+      parsed = JSON.parse(rawText.replace(/^```(?:json)?|```$/g, '').trim());
+    } catch (parseErr) {
+      console.error('[interpret] Unparseable model output:', previewForLog(rawText, 400));
+      throw new Error('Model returned malformed JSON.');
+    }
+
+    res.json({
+      reference,
+      lang,
+      theological: collapseWhitespace(parsed.theological || ''),
+      symbolic:    collapseWhitespace(parsed.symbolic    || ''),
+      application: collapseWhitespace(parsed.application || '')
+    });
+
+  } catch (err) {
+    console.error('[interpret] Error:', err);
+    return sendJsonError(res, err, 'Failed to produce an interpretation.');
+  }
+});
+
 // ── GET / — health check ──────────────────────────────────
 app.get('/', (req, res) => {
   res.json({ status: '✝️ Bible Answer API is running' });
