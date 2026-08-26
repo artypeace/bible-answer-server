@@ -1,5 +1,6 @@
-const express = require('express');
-const cors    = require('cors');
+const express   = require('express');
+const cors      = require('cors');
+const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 const pkg = require('./package.json');
 const {
@@ -12,8 +13,51 @@ const {
 } = require('./lib/answerPipeline');
 
 const app = express();
+
+// Railway terminates TLS in a proxy in front of this process, so every request
+// arrives carrying the proxy's address. Without this the rate limiter would see
+// a single client for the whole world: one script would lock out every real
+// user at once. The value is the number of proxies to trust, not `true` —
+// trusting blindly lets a caller forge X-Forwarded-For and dodge the limit.
+app.set('trust proxy', 1);
+
 app.use(cors());
 app.use(express.json());
+
+/// Shared shape so a throttled client gets the same error envelope as any
+/// other failure and can show a real message instead of "unexpected error".
+function makeLimiter({ windowMs, limit, message }) {
+  return rateLimit({
+    windowMs,
+    limit,
+    standardHeaders: 'draft-7',   // RateLimit-* headers, so a client can back off
+    legacyHeaders: false,
+    handler: (_req, res) =>
+      res.status(429).json({ error: { code: 'rate_limited', message } }),
+  });
+}
+
+// /ask and /interpret each spend an Anthropic call. A person working through a
+// feeling sends a handful of these in a sitting; a loop reaches thirty in under
+// a minute, which is exactly the difference worth acting on.
+const modelLimiter = makeLimiter({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  message: 'Too many requests. Please wait a few minutes and try again.',
+});
+
+// Everything else only reads scripture from a free upstream. The limit here is
+// to stop hammering, not to protect a bill, so it is deliberately loose —
+// several readers behind one carrier NAT must not collide.
+const readLimiter = makeLimiter({
+  windowMs: 15 * 60 * 1000,
+  limit: 240,
+  message: 'Too many requests. Please slow down.',
+});
+
+app.use('/ask',       modelLimiter);
+app.use('/interpret', modelLimiter);
+app.use('/verse-of-day', readLimiter);
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
     return res.status(400).json({
@@ -553,6 +597,20 @@ app.get('/verse-of-day', async (req, res) => {
   }
 });
 
+// ── /debug/* — gated ──────────────────────────────────────
+// Answers 404 rather than 403 when the token is missing or wrong: a 403 tells
+// a stranger there is something here worth guessing at, while a 404 is
+// indistinguishable from a route that was never deployed. With DEBUG_TOKEN
+// unset — the normal state in production — these routes simply do not exist.
+app.use('/debug', (req, res, next) => {
+  const expected = process.env.DEBUG_TOKEN;
+  const provided = req.get('x-debug-token') || req.query.token;
+  if (expected && provided === expected) return next();
+  return res.status(404).json({
+    error: { code: 'not_found', message: 'Route not found.' }
+  });
+});
+
 // ── GET /debug/build ──────────────────────────────────────
 app.get('/debug/build', (_req, res) => {
   res.json(buildInfo());
@@ -756,6 +814,10 @@ app.use((err, req, res, next) => {
 
 app.listen(process.env.PORT || 3000, () => {
   console.log(`[startup] Build info: ${JSON.stringify(buildInfo())}`);
-  console.log('✝️ Debug routes available: /debug/build, /debug/verse');
+  console.log(
+    process.env.DEBUG_TOKEN
+      ? '✝️ Debug routes enabled (token required): /debug/build, /debug/verse'
+      : '✝️ Debug routes disabled (set DEBUG_TOKEN to enable)'
+  );
   console.log(`✝️ Server running on port ${process.env.PORT || 3000}`);
 });
