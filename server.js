@@ -11,6 +11,11 @@ const {
   normalizeLang,
   previewForLog
 } = require('./lib/answerPipeline');
+const { dailyVerse } = require('./lib/dailyVerses');
+
+// One place to change the model. Sonnet 5 unless the environment says
+// otherwise, so a model swap is a Railway variable, not a deploy.
+const MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-5';
 
 const app = express();
 
@@ -104,7 +109,7 @@ app.use((req, res, next) => {
 const TRANSLATIONS = {
   en:  'BSB',
   pt:  'por_bsl',
-  es:  'spa_rvg',
+  es:  'spa_r09', // Reina-Valera 1909 (public domain); RVG is copyrighted
   ru:  'rus_syn',
   fr:  'fra_lsg',
   fil: 'tgl_ulb',
@@ -438,7 +443,7 @@ function buildUserMessage(query, lang, attempt, previousRawText) {
 
 async function requestModelSelection({ query, lang, attempt, previousRawText }) {
   const modelRequest = {
-    model: 'claude-sonnet-5',
+    model: MODEL,
     max_tokens: 1024,
     // Sonnet 5 runs adaptive thinking by default; disable it so the small
     // max_tokens budget goes entirely to the JSON answer and latency stays low.
@@ -450,7 +455,7 @@ async function requestModelSelection({ query, lang, attempt, previousRawText }) 
     }]
   };
 
-  console.log(`[ask] Model request attempt ${attempt}: ${previewForLog(modelRequest.messages[0].content, 320)}`);
+  console.log(`[ask] Model request attempt ${attempt}: ${modelRequest.messages[0].content.length} chars`);
 
   const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -494,7 +499,9 @@ app.post('/ask', async (req, res) => {
   }
 
   try {
-    console.log(`[ask] Incoming payload: ${JSON.stringify({ query, lang: requestedLang })}`);
+    // Length and language only — the question itself is the person's and
+    // the privacy policy says we do not keep it.
+    console.log(`[ask] Incoming: lang=${requestedLang} queryLength=${(query || '').length}`);
     logLanguageResolution('ask', requestedLang, lang, translationConfig);
 
     const response = await buildAskResponse({
@@ -507,14 +514,9 @@ app.post('/ask', async (req, res) => {
       fetchPassageText: getPassageText
     });
 
-    console.log(`[ask] Final normalized response: ${JSON.stringify({
-      reference: response.reference,
-      verseTextPreview: previewForLog(response.verseText),
-      contextPreview: previewForLog(response.context),
-      applicationPreview: previewForLog(response.application),
-      prayerPreview: previewForLog(response.prayer),
-      translation: response.translation
-    })}`);
+    // The reflection and prayer are written to the person's situation, so
+    // they are as private as the question; only the reference is logged.
+    console.log(`[ask] Answered: ${response.reference} (${response.translation})`);
 
     res.json(response);
 
@@ -525,70 +527,130 @@ app.post('/ask', async (req, res) => {
 });
 
 // ── GET /verse-of-day ─────────────────────────────────────
+// ── GET /health ───────────────────────────────────────────
+// For Railway's checks and uptime monitors. Says nothing about upstreams on
+// purpose: a probe that fans out to Anthropic and helloao would turn every
+// monitor tick into paid traffic.
+app.get('/health', (_req, res) => {
+  res.json({ ok: true, version: pkg.version, uptime: Math.round(process.uptime()) });
+});
+
+// ── Synodal Psalter numbering ─────────────────────────────
+// The Russian Synodal text on helloao follows the Septuagint: from Psalm 10
+// to 147 its chapter numbers run one behind the Masoretic numbering the other
+// five translations use, and superscriptions ("A Psalm of David…") are
+// counted as verses, pushing the verse numbers down by one or two. Both are
+// corrected here so a Masoretic reference reads the same words in Russian.
+// The psalms the two systems split or merge differently (9–10, 114–116,
+// 147) are returned unchanged; the daily list avoids them.
+function synodalPsalmChapter(masoretic) {
+  if (masoretic >= 11 && masoretic <= 113) return masoretic - 1;
+  if (masoretic >= 117 && masoretic <= 146) return masoretic - 1;
+  return masoretic;
+}
+
+async function synodalVerseOffset(synodalChapter, masoreticChapter) {
+  // The offset is the superscription's verse count, which is exactly the
+  // difference in verse counts between the two texts for the same psalm.
+  const count = async (translation, chapter) => {
+    const res = await fetch(`https://bible.helloao.org/api/${translation}/PSA/${chapter}.json`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return (data?.chapter?.content || []).filter(c => c && c.type === 'verse').length;
+  };
+  const [syn, bsb] = await Promise.all([count('rus_syn', synodalChapter), count('BSB', masoreticChapter)]);
+  if (syn == null || bsb == null) return 0;
+  return Math.max(0, Math.min(2, syn - bsb));
+}
+
+/// Masoretic (book 19, chapter, verse) → what to fetch and show for `lang`.
+async function localizeReference({ book, chapter, verse, lang }) {
+  const { translation } = resolveTranslationConfig(lang);
+  if (book !== 19 || translation !== 'rus_syn') return { chapter, verse };
+  const synChapter = synodalPsalmChapter(chapter);
+  const offset = await synodalVerseOffset(synChapter, chapter);
+  return { chapter: synChapter, verse: verse + offset };
+}
+
+// ── Daily tagline, written once a day per language ────────
+// A sentence under the verse. Cached by day and language: the first reader
+// of the day in each language pays one small model call, everyone after
+// reads the cache. The cache is in memory — a restart costs one more call.
+const taglineCache = new Map();   // "2026-09-18|ru" → string
+
+const TAGLINE_LANG_NAMES = {
+  en: 'English', ru: 'Russian', es: 'Spanish', pt: 'Brazilian Portuguese', fr: 'French', fil: 'Filipino (Tagalog)'
+};
+
+async function dailyTagline({ reference, verseText, lang, dayKey }) {
+  const key = `${dayKey}|${lang}`;
+  if (taglineCache.has(key)) return taglineCache.get(key);
+
+  const language = TAGLINE_LANG_NAMES[lang] || 'English';
+  const request = {
+    model: MODEL,
+    max_tokens: 120,
+    thinking: { type: 'disabled' },
+    system: `You write the one-line caption shown under the Bible verse of the day in a devotional app. ` +
+            `Write in ${language}. One sentence, at most 12 words, warm and plain, no exclamation marks, ` +
+            `no quotation marks, no emoji, no reference to the verse number. Say what the verse gives a ` +
+            `person today. Reply with the sentence only.`,
+    messages: [{ role: 'user', content: `${reference}\n\n${verseText}` }]
+  };
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify(request)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message || `status ${res.status}`);
+    const text = collapseWhitespace(extractClaudeText(data)).replace(/^["«»“”']+|["«»“”'.]+$/g, '').trim();
+    if (text) {
+      taglineCache.set(key, text + '.');
+      // Keep the map from growing across days.
+      for (const k of taglineCache.keys()) if (!k.startsWith(dayKey)) taglineCache.delete(k);
+      return text + '.';
+    }
+  } catch (err) {
+    console.warn(`[verse-of-day] tagline failed (${lang}): ${err.message}`);
+  }
+  return '';
+}
+
 app.get('/verse-of-day', async (req, res) => {
   const requestedLang = req.query.lang;
   const lang = normalizeLang(requestedLang);
   const translationConfig = resolveTranslationConfig(lang);
   logLanguageResolution('verse-of-day', requestedLang, lang, translationConfig);
 
-  // 30 popular verses — one per day, cycles monthly
-  const DAILY = [
-    { book: 43, chapter: 3,  verse: 16, tagline: { en: "God's greatest act of love for humanity.", pt: "O maior ato de amor de Deus pela humanidade.", es: "El mayor acto de amor de Dios por la humanidad.", ru: "Величайший акт любви Бога к человечеству.", fr: "Le plus grand acte d'amour de Dieu pour l'humanité." } },
-    { book: 19, chapter: 23, verse: 1,  tagline: { en: "God is our faithful shepherd in every season.", pt: "Deus é nosso fiel pastor em toda estação.", es: "Dios es nuestro fiel pastor en toda estación.", ru: "Бог — наш верный пастырь в любое время.", fr: "Dieu est notre berger fidèle en toute saison." } },
-    { book: 50, chapter: 4,  verse: 13, tagline: { en: "Christ gives us strength beyond our own limits.", pt: "Cristo nos dá força além dos nossos próprios limites.", es: "Cristo nos da fortaleza más allá de nuestros límites.", ru: "Христос даёт нам силу, превосходящую наши возможности.", fr: "Christ nous donne une force au-delà de nos limites." } },
-    { book: 24, chapter: 29, verse: 11, tagline: { en: "God's plans for you are full of hope and purpose.", pt: "Os planos de Deus para você são cheios de esperança.", es: "Los planes de Dios para ti están llenos de esperanza.", ru: "Планы Бога о тебе полны надежды и смысла.", fr: "Les plans de Dieu pour toi sont pleins d'espérance et de sens." } },
-    { book: 40, chapter: 6,  verse: 34, tagline: { en: "Lay down tomorrow's worries — today is enough.", pt: "Deixe as preocupações de amanhã — hoje é suficiente.", es: "Deja las preocupaciones de mañana — hoy es suficiente.", ru: "Оставь заботы о завтрашнем дне — сегодняшнего достаточно.", fr: "Dépose les soucis de demain — aujourd'hui suffit." } },
-    { book: 19, chapter: 46, verse: 1,  tagline: { en: "God is our refuge and strength in times of trouble.", pt: "Deus é nosso refúgio e força nos tempos de tribulação.", es: "Dios es nuestro refugio y fortaleza en tiempos de angustia.", ru: "Бог — наше прибежище и сила в трудные времена.", fr: "Dieu est notre refuge et notre force dans la détresse." } },
-    { book: 45, chapter: 8,  verse: 28, tagline: { en: "All things — even hard ones — work for good in God's hands.", pt: "Todas as coisas cooperam para o bem nas mãos de Deus.", es: "Todas las cosas cooperan para bien en las manos de Dios.", ru: "Все — даже трудное — обращается ко благу в руках Бога.", fr: "Toutes choses, même difficiles, concourent au bien dans les mains de Dieu." } },
-    { book: 20, chapter: 3,  verse: 5,  tagline: { en: "Trust God's direction rather than your own understanding.", pt: "Confie na direção de Deus, não em seu próprio entendimento.", es: "Confía en la dirección de Dios, no en tu propio entendimiento.", ru: "Доверяй Богу, а не своему разумению.", fr: "Fais confiance à la direction de Dieu plutôt qu'à ton propre entendement." } },
-    { book: 19, chapter: 121, verse: 2, tagline: { en: "Our help comes from the Creator of heaven and earth.", pt: "Nosso socorro vem do Criador do céu e da terra.", es: "Nuestra ayuda viene del Creador del cielo y la tierra.", ru: "Наша помощь от Творца неба и земли.", fr: "Notre secours vient du Créateur du ciel et de la terre." } },
-    { book: 23, chapter: 40, verse: 31, tagline: { en: "Those who wait on the Lord receive renewed strength.", pt: "Os que esperam no Senhor renovam as suas forças.", es: "Los que esperan en el Señor renuevan sus fuerzas.", ru: "Уповающие на Господа обновляются в силах.", fr: "Ceux qui espèrent en l'Éternel renouvellent leurs forces." } },
-    { book: 19, chapter: 34, verse: 18, tagline: { en: "God is especially close to the broken-hearted.", pt: "Deus está especialmente perto dos de coração quebrantado.", es: "Dios está especialmente cerca de los quebrantados de corazón.", ru: "Бог особенно близок к сокрушённым сердцем.", fr: "Dieu est particulièrement proche de ceux qui ont le cœur brisé." } },
-    { book: 40, chapter: 11, verse: 28, tagline: { en: "Jesus personally invites the weary to find rest in him.", pt: "Jesus convida pessoalmente os cansados a encontrar descanso nele.", es: "Jesús invita personalmente a los cansados a encontrar descanso en él.", ru: "Иисус лично приглашает усталых найти покой в Нём.", fr: "Jésus invite personnellement les fatigués à trouver le repos en lui." } },
-    { book: 47, chapter: 5,  verse: 7,  tagline: { en: "We can release anxiety by casting our cares on God.", pt: "Podemos liberar a ansiedade lançando nossas preocupações em Deus.", es: "Podemos liberar la ansiedad echando nuestras cargas sobre Dios.", ru: "Мы можем отпустить тревогу, возложив заботы на Бога.", fr: "Nous pouvons relâcher l'anxiété en confiant nos soucis à Dieu." } },
-    { book: 45, chapter: 8,  verse: 38, tagline: { en: "Nothing in all creation can separate us from God's love.", pt: "Nada em toda a criação pode nos separar do amor de Deus.", es: "Nada en toda la creación puede separarnos del amor de Dios.", ru: "Ничто в творении не может отлучить нас от любви Бога.", fr: "Rien dans la création ne peut nous séparer de l'amour de Dieu." } },
-    { book: 50, chapter: 4,  verse: 6,  tagline: { en: "Prayer and gratitude replace anxiety with God's peace.", pt: "Oração e gratidão substituem a ansiedade pela paz de Deus.", es: "La oración y la gratitud reemplazan la ansiedad con la paz de Dios.", ru: "Молитва и благодарность заменяют тревогу миром Божьим.", fr: "La prière et la gratitude remplacent l'anxiété par la paix de Dieu." } },
-    { book: 23, chapter: 41, verse: 10, tagline: { en: "God promises his presence and strength to those who fear him.", pt: "Deus promete sua presença e força aos que o temem.", es: "Dios promete su presencia y fortaleza a los que le temen.", ru: "Бог обещает Своё присутствие и силу тем, кто боится Его.", fr: "Dieu promet sa présence et sa force à ceux qui le craignent." } },
-    { book: 19, chapter: 37, verse: 4,  tagline: { en: "Delight in God, and he shapes our deepest desires.", pt: "Deleite-se em Deus e ele moldará os seus desejos mais profundos.", es: "Deléitate en Dios y él moldeará tus deseos más profundos.", ru: "Угождай Господу, и Он направит твои сокровенные желания.", fr: "Fais de Dieu tes délices, et il façonnera tes désirs profonds." } },
-    { book: 60, chapter: 5,  verse: 7,  tagline: { en: "Cast your anxiety on God because he cares for you.", pt: "Lance sobre Deus a sua ansiedade porque ele cuida de você.", es: "Echa sobre Dios tu ansiedad porque él cuida de ti.", ru: "Возложи на Бога тревогу свою, ибо Он печётся о тебе.", fr: "Jette ton anxiété sur Dieu, car il prend soin de toi." } },
-    { book: 45, chapter: 12, verse: 12, tagline: { en: "Perseverance in hope and prayer sustains the believer.", pt: "A perseverança na esperança e na oração sustenta o crente.", es: "La perseverancia en la esperanza y la oración sostiene al creyente.", ru: "Постоянство в надежде и молитве поддерживает верующего.", fr: "La persévérance dans l'espérance et la prière soutient le croyant." } },
-    { book: 20, chapter: 4,  verse: 23, tagline: { en: "Guard your heart — it is the source of all that you do.", pt: "Guarde o seu coração — é a fonte de tudo o que você faz.", es: "Guarda tu corazón — es la fuente de todo lo que haces.", ru: "Храни своё сердце — оно источник всей твоей жизни.", fr: "Garde ton cœur — il est la source de tout ce que tu fais." } },
-    { book: 19, chapter: 91, verse: 2,  tagline: { en: "God is our fortress — we can fully take refuge in him.", pt: "Deus é nossa fortaleza — podemos refugiar-nos plenamente nele.", es: "Dios es nuestra fortaleza — podemos refugiarnos plenamente en él.", ru: "Бог — наша крепость, в Нём мы можем полностью укрыться.", fr: "Dieu est notre forteresse — nous pouvons nous réfugier en lui." } },
-    { book: 45, chapter: 15, verse: 13, tagline: { en: "The God of hope fills believers with joy and peace.", pt: "O Deus da esperança enche os crentes de alegria e paz.", es: "El Dios de la esperanza llena a los creyentes de gozo y paz.", ru: "Бог надежды наполняет верующих радостью и миром.", fr: "Le Dieu de l'espérance remplit les croyants de joie et de paix." } },
-    { book: 23, chapter: 26, verse: 3,  tagline: { en: "Perfect peace is the gift for those who fix their mind on God.", pt: "A paz perfeita é o presente para os que fixam a mente em Deus.", es: "La paz perfecta es el regalo para los que fijan su mente en Dios.", ru: "Совершенный мир — дар тем, чей разум устремлён к Богу.", fr: "La paix parfaite est le don pour ceux qui fixent leur esprit sur Dieu." } },
-    { book: 43, chapter: 16, verse: 33, tagline: { en: "Jesus promises peace even in the midst of life's trouble.", pt: "Jesus promete paz mesmo em meio às tribulações da vida.", es: "Jesús promete paz incluso en medio de las tribulaciones de la vida.", ru: "Иисус обещает мир даже среди жизненных скорбей.", fr: "Jésus promet la paix même au milieu des épreuves." } },
-    { book: 49, chapter: 3,  verse: 20, tagline: { en: "God can do far more than we dare to ask or imagine.", pt: "Deus pode fazer muito mais do que ousamos pedir ou imaginar.", es: "Dios puede hacer mucho más de lo que osamos pedir o imaginar.", ru: "Бог может сделать несравненно больше, чем мы просим или думаем.", fr: "Dieu peut faire bien au-delà de ce que nous osons demander ou imaginer." } },
-    { book: 59, chapter: 1,  verse: 5,  tagline: { en: "If you lack wisdom, ask God — he gives it generously.", pt: "Se lhe falta sabedoria, peça a Deus — ele dá generosamente.", es: "Si te falta sabiduría, pídela a Dios — él da generosamente.", ru: "Если не хватает мудрости, проси у Бога — Он даёт щедро.", fr: "Si tu manques de sagesse, demande à Dieu — il donne généreusement." } },
-    { book: 19, chapter: 145, verse: 18,tagline: { en: "God is near to all who call on him in truth.", pt: "Deus está perto de todos que o invocam na verdade.", es: "Dios está cerca de todos los que lo invocan en verdad.", ru: "Бог близок ко всем, кто призывает Его искренно.", fr: "Dieu est proche de tous ceux qui l'invoquent en vérité." } },
-    { book: 40, chapter: 7,  verse: 7,  tagline: { en: "Jesus urges us to ask, seek and knock in persistent prayer.", pt: "Jesus nos urge a pedir, buscar e bater na porta com persistência.", es: "Jesús nos insta a pedir, buscar y llamar con oración persistente.", ru: "Иисус призывает нас просить, искать и стучать в постоянной молитве.", fr: "Jésus nous invite à demander, chercher et frapper avec persévérance." } },
-    { book: 45, chapter: 5,  verse: 8,  tagline: { en: "God demonstrated his love for us while we were still sinners.", pt: "Deus demonstrou seu amor por nós quando ainda éramos pecadores.", es: "Dios demostró su amor por nosotros cuando aún éramos pecadores.", ru: "Бог явил Свою любовь к нам, когда мы ещё были грешниками.", fr: "Dieu a montré son amour pour nous alors que nous étions encore pécheurs." } },
-    { book: 19, chapter: 16, verse: 11, tagline: { en: "In God's presence is fullness of joy and eternal pleasures.", pt: "Na presença de Deus há plenitude de alegria e prazeres eternos.", es: "En la presencia de Dios hay plenitud de gozo y deleites eternos.", ru: "В присутствии Бога — полнота радости и вечные наслаждения.", fr: "Dans la présence de Dieu se trouvent la joie parfaite et les délices éternels." } },
-  ];
-
-  const now = new Date();
-  const start = new Date(now.getFullYear(), 0, 0);
-  const dayOfYear = Math.floor((now - start) / 86400000);
-  const entry = DAILY[dayOfYear % DAILY.length];
-  const { book, chapter, verse } = entry;
-  const tagline = entry.tagline[lang] || entry.tagline.en;
+  const { book, chapter, verse, dayOfYear } = dailyVerse();
+  const dayKey = `${new Date().getUTCFullYear()}-${dayOfYear}`;
 
   try {
+    const local = await localizeReference({ book, chapter, verse, lang });
     const verseText = await getPassageText({
       book,
-      chapter,
-      verseStart: verse,
-      verseEnd: verse,
+      chapter:    local.chapter,
+      verseStart: local.verse,
+      verseEnd:   local.verse,
       lang
     });
 
     if (!verseText) {
-      throw new Error(`Verse of the day returned empty verse text for ${book}:${chapter}:${verse}`);
+      throw new Error(`Verse of the day returned empty verse text for ${book}:${local.chapter}:${local.verse}`);
     }
 
-    const bookName = BOOKS[lang]?.[book - 1] || '';
+    const bookName  = BOOKS[lang]?.[book - 1] || '';
+    const reference = `${bookName} ${local.chapter}:${local.verse}`;
+    const tagline   = await dailyTagline({ reference, verseText, lang, dayKey });
     res.json({
       verse:       verseText,
-      reference:   `${bookName} ${chapter}:${verse}`,
+      reference,
       tagline,
       translation: translationConfig.translation
     });
@@ -739,7 +801,7 @@ app.post('/interpret', async (req, res) => {
     }
 
     const modelRequest = {
-      model: 'claude-sonnet-5',
+      model: MODEL,
       max_tokens: scope === 'chapter' ? 2000 : 1400,
       thinking: { type: 'disabled' },
       system: buildInterpretPrompt(lang, scope),
