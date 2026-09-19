@@ -511,7 +511,8 @@ app.post('/ask', async (req, res) => {
       books: BOOKS,
       logger: console,
       selectAnswer: requestModelSelection,
-      fetchPassageText: getPassageText
+      fetchPassageText: getPassageText,
+      localizeReference: localizeSelection
     });
 
     // The reflection and prayer are written to the person's situation, so
@@ -570,6 +571,13 @@ async function localizeReference({ book, chapter, verse, lang }) {
   const synChapter = synodalPsalmChapter(chapter);
   const offset = await synodalVerseOffset(synChapter, chapter);
   return { chapter: synChapter, verse: verse + offset };
+}
+
+/// The same conversion for a verse range, as the answer pipeline selects.
+async function localizeSelection({ book, chapter, verseStart, verseEnd }, lang) {
+  const start = await localizeReference({ book, chapter, verse: verseStart, lang });
+  const shift = start.verse - verseStart;
+  return { chapter: start.chapter, verseStart: start.verse, verseEnd: verseEnd + shift };
 }
 
 // ── Daily tagline, written once a day per language ────────
