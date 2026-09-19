@@ -488,6 +488,7 @@ app.post('/ask', async (req, res) => {
       lang,
       translation: translationConfig.translation,
       books: BOOKS,
+      bookCodes: BOOK_CODES,
       logger: console,
       selectAnswer: requestModelSelection,
       fetchPassageText: getPassageText,
