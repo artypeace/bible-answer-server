@@ -8,6 +8,7 @@ const {
   collapseWhitespace,
   extractClaudeText,
   extractPassageTextFromChapterData,
+  mixedScriptWords,
   normalizeLang,
   previewForLog
 } = require('./lib/answerPipeline');
@@ -162,7 +163,8 @@ function languageQualityNote(lang) {
   return `
 LANGUAGE
 - Write natural, literate ${language} as an educated native speaker would — correct gender, case, agreement and idiom throughout. Re-read proper nouns: names of books, people and places must be declined correctly.
-- Quote the verse's own wording exactly as given; do not paraphrase Scripture inside quotation marks.${ru}`;
+- Quote the verse's own wording exactly as given; do not paraphrase Scripture inside quotation marks.
+- Never mix alphabets inside a word. In Russian text every letter of every word is Cyrillic — no Latin "e", "o", "a", "p", "c", "y" standing in for Cyrillic ones. Re-check each word before replying.${ru}`;
 }
 
 function systemPrompt(lang) {
@@ -514,6 +516,8 @@ app.post('/ask', async (req, res) => {
       localizeReference: localizeSelection
     });
 
+    await repairFields(response, ['context', 'application', 'prayer'], lang);
+
     // The reflection and prayer are written to the person's situation, so
     // they are as private as the question; only the reference is logged.
     console.log(`[ask] Answered: ${response.reference} (${response.translation})`);
@@ -534,6 +538,38 @@ app.post('/ask', async (req, res) => {
 app.get('/health', (_req, res) => {
   res.json({ ok: true, version: pkg.version, uptime: Math.round(process.uptime()) });
 });
+
+// ── Script repair ────────────────────────────────────────
+// A second, tiny model call that fixes mixed-alphabet words in place. Only
+// runs when `mixedScriptWords` found something, which is rare; costs a
+// fraction of a second when it does. Falls back to the original text.
+async function repairMixedScript(text, lang) {
+  const bad = mixedScriptWords(text);
+  if (!bad.length || !['ru'].includes(lang)) return text;
+  console.warn(`[script] mixed-alphabet words: ${bad.join(', ')}`);
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: MODEL, max_tokens: 1200, thinking: { type: 'disabled' },
+        system: 'You correct Russian text in which some letters were typed in the Latin alphabet by mistake (e.g. "deneг" → "денег", "сuл" → "сил"). Replace every Latin letter inside Russian words with the intended Cyrillic letter. Change nothing else — not wording, not punctuation. Reply with the corrected text only.',
+        messages: [{ role: 'user', content: text }]
+      })
+    });
+    const data = await res.json();
+    const fixed = collapseWhitespace(extractClaudeText(data));
+    return fixed && !mixedScriptWords(fixed).length ? fixed : text;
+  } catch (err) {
+    console.warn(`[script] repair failed: ${err.message}`);
+    return text;
+  }
+}
+
+async function repairFields(obj, keys, lang) {
+  for (const k of keys) if (typeof obj[k] === 'string') obj[k] = await repairMixedScript(obj[k], lang);
+  return obj;
+}
 
 // ── Synodal Psalter numbering ─────────────────────────────
 // The Russian Synodal text on helloao follows the Septuagint: from Psalm 10
@@ -841,13 +877,13 @@ app.post('/interpret', async (req, res) => {
       throw new Error('Model returned malformed JSON.');
     }
 
-    res.json({
-      reference,
-      lang,
+    const out = {
       theological: collapseWhitespace(parsed.theological || ''),
       symbolic:    collapseWhitespace(parsed.symbolic    || ''),
       application: collapseWhitespace(parsed.application || '')
-    });
+    };
+    await repairFields(out, ['theological', 'symbolic', 'application'], lang);
+    res.json({ reference, lang, ...out });
 
   } catch (err) {
     console.error('[interpret] Error:', err);
