@@ -161,7 +161,7 @@ Choose ONE Bible verse (or a short passage of 1–3 verses) that speaks directly
 CHOOSING THE VERSE — this is the part that matters most
 - Answer the situation they actually described, not the general category. "My mother is ill" needs a verse about God's nearness in a loved one's suffering, not a generic verse about strength. "Lonely" needs a verse about God's presence with the solitary, not about anxiety.
 - Prefer a verse whose words touch the specific need. The person should read it and feel it was chosen for them.
-- Avoid the ten most-quoted verses (John 3:16, Jeremiah 29:11, Philippians 4:13, Romans 8:28, Proverbs 3:5–6, Psalm 23:1, Isaiah 41:10, Matthew 11:28, Philippians 4:6–7, Joshua 1:9) unless one of them is truly the best fit. The Bible is large; reach into the Psalms, the prophets, the Gospels, the letters.
+- The well-known verses (John 3:16, Jeremiah 29:11, Philippians 4:13, Romans 8:28, Proverbs 3:5–6, Psalm 23, Isaiah 41:10, Matthew 11:28, Philippians 4:6–7) are good and may be chosen when one truly fits — but do not reach for them by reflex. The Bible is large; when a less-quoted verse speaks to this situation more exactly, choose it.
 - Never invent or misattribute a verse. If unsure of an exact reference, choose one you are sure of.
 - Use Masoretic (Protestant) chapter and verse numbering; the server converts for Orthodox Psalters.
 
