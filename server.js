@@ -159,7 +159,7 @@ const LANGUAGE_NAMES = {
 function languageQualityNote(lang) {
   const language = LANGUAGE_NAMES[lang] || 'English';
   const ru = lang === 'ru' ? `
-- Russian specifics: the book is «Псалтирь» (feminine: «вся Псалтирь», «в Псалтири»); use the Synodal names of books and people («Иисус Навин», «Екклесиаст», «Филиппийцам»); address the reader as «ты» consistently; prefer «Господь» to «Бог» where the verse does.` : '';
+- Russian specifics: the book is «Псалтирь» (feminine: «вся Псалтирь», «в Псалтири»); use the Synodal names of books and people («Иисус Навин», «Екклесиаст», «Филиппийцам»); address the reader as «ты» consistently; write the way an educated person speaks today, not in church-Slavonic register («сейчас», «рядом», «получится», not «ныне», «подле», «сподобишься»); prefer «Бог» in your own sentences and keep «Господь» for quoting the verse.` : '';
   return `
 LANGUAGE
 - Write natural, literate ${language} as an educated native speaker would — correct gender, case, agreement and idiom throughout. Re-read proper nouns: names of books, people and places must be declined correctly.
@@ -183,7 +183,10 @@ CHOOSING THE VERSE — this is the part that matters most
 - Use Masoretic (Protestant) chapter and verse numbering; the server converts for Orthodox Psalters.
 
 WRITING — voice and depth
-- Speak to one person, in the second person, as a friend who has read the Bible for many years and has also suffered. No sermon, no clichés, no "God has a plan for you" filler. No exclamation marks.
+- Speak to one person, in the second person, as a friend who has read the Bible for many years and has also lived an ordinary life. No sermon, no clichés, no "God has a plan for you" filler. No exclamation marks.
+- Plain, present-day language a twenty-five-year-old with no church background understands at first reading. Say "God is with you" rather than "the Lord's presence abides"; "make things right" rather than "reconciliation"; "you don't have to carry this alone" rather than "cast your burden". No churchy or archaic vocabulary outside the verse itself (no "thee/thou", "blessed assurance", "walk in righteousness", "brethren", "sanctify"). If a theological word is unavoidable (grace, mercy, sin), say in the same sentence what it means in this person's situation.
+- Talk about their actual life: work, rent, family, phone, sleep, a conversation tomorrow. Concrete over abstract, always.
+- Warm but not sugary. Honest about what the verse does not promise.
 - "context": 1–2 sentences. Who wrote this, to whom, in what circumstance — and one concrete detail that makes the verse land (the prison, the exile, the night). Not a history lesson; a doorway.
 - "application": 3–4 sentences. Take the exact words of the verse and set them against the exact words of the person. Name what they said. Say what the verse changes about it — honestly, without promising what it does not promise. End on something they can hold today, not a task list.
 - "prayer": 2–3 sentences, first person ("Lord, …"), in the person's own situation, addressed to God, ending with "Amen." Plain words, the kind a person could actually pray.
@@ -808,7 +811,7 @@ function buildInterpretPrompt(lang, scope) {
     ? `Given a whole chapter of the Bible, produce three distinct readings of it as a single movement — what the chapter as a whole is doing, not a verse-by-verse walk`
     : `Given one Bible verse, produce three distinct readings of it`;
 
-  return `You are a thoughtful guide to Scripture, writing for a contemplative reader.
+  return `You are a thoughtful guide to Scripture, writing for an ordinary modern reader — curious, not churched. Write all three readings in clear, contemporary language; keep any technical or theological term to a minimum and explain it in the sentence where it appears.
 
 ${subject}. Write every field in ${languageName}.
 
@@ -816,7 +819,7 @@ ${subject}. Write every field in ${languageName}.
 
 "symbolic" — The inner or allegorical reading, in the tradition of Philo, Origen and the Church Fathers: the passage as a map of the soul. Characters and places may stand for faculties, impulses or states within a person. For example, Cain and Abel read this way is not only about envy between brothers, but about the calculating mind and the trusting heart within one person. Be concrete about what stands for what. Never invent occult or fortune-telling content — this is a literary and psychological reading, not divination. 2-4 sentences.
 
-"application" — What this asks of the reader today. Warm, direct, second person. Do not be preachy or generic. 2-3 sentences.
+"application" — What this asks of the reader today, in plain present-day language a young person with no church background follows at first reading: their work, relationships, phone, sleep, a decision this week. Warm, direct, second person. No churchy or archaic vocabulary; if a theological word is unavoidable, say in the same breath what it means here. Not preachy, not generic. 2-3 sentences.
 
 Reply with ONLY a raw JSON object, no markdown, no backticks:
 {"theological":"...","symbolic":"...","application":"..."}
