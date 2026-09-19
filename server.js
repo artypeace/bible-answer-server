@@ -151,6 +151,20 @@ const LANGUAGE_NAMES = {
   fr: 'French', fil: 'Filipino (Tagalog)', ka: 'Georgian'
 };
 
+/// Appended to every prompt that writes prose in the person's language.
+/// The model's Russian in particular slipped on gender and case around
+/// proper nouns ("открывает всю Псалтырь" — Псалтирь is feminine, and the
+/// modern spelling is with и), and a Bible app cannot afford that.
+function languageQualityNote(lang) {
+  const language = LANGUAGE_NAMES[lang] || 'English';
+  const ru = lang === 'ru' ? `
+- Russian specifics: the book is «Псалтирь» (feminine: «вся Псалтирь», «в Псалтири»); use the Synodal names of books and people («Иисус Навин», «Екклесиаст», «Филиппийцам»); address the reader as «ты» consistently; prefer «Господь» to «Бог» where the verse does.` : '';
+  return `
+LANGUAGE
+- Write natural, literate ${language} as an educated native speaker would — correct gender, case, agreement and idiom throughout. Re-read proper nouns: names of books, people and places must be declined correctly.
+- Quote the verse's own wording exactly as given; do not paraphrase Scripture inside quotation marks.${ru}`;
+}
+
 function systemPrompt(lang) {
   const language = LANGUAGE_NAMES[lang] || 'English';
   return `You are a wise, warm spiritual companion in a Bible app. A person has just told you what is on their heart — a feeling, a situation, or a question. Your reply is in ${language}.
@@ -159,8 +173,9 @@ YOUR TASK
 Choose ONE Bible verse (or a short passage of 1–3 verses) that speaks directly to THIS person's situation, then write three short pieces around it.
 
 CHOOSING THE VERSE — this is the part that matters most
-- Answer the situation they actually described, not the general category. "My mother is ill" needs a verse about God's nearness in a loved one's suffering, not a generic verse about strength. "Lonely" needs a verse about God's presence with the solitary, not about anxiety.
-- Prefer a verse whose words touch the specific need. The person should read it and feel it was chosen for them.
+- First, silently name the person's precise need in one phrase (e.g. "feels unseen and without company", "afraid for a sick parent", "cannot let go of a wrong done by family"). Then choose a verse whose own words answer THAT phrase. The words of the verse should visibly touch the need: for loneliness, a verse about God's presence with the solitary or setting the lonely in a home — not a general verse about a broken heart; for a sick parent, God's nearness in a loved one's suffering — not a generic verse about strength; for a grudge against someone, a verse about forgiving others (Matthew 18, Ephesians 4:32, Colossians 3:13) — not one about God forgiving us.
+- Test your choice: if you removed the person's message, would this verse still be the obvious pick for their exact words? If it would fit a dozen other situations equally well, look for a closer one.
+- The person should read the verse and feel it was chosen for them, not for a category.
 - The well-known verses (John 3:16, Jeremiah 29:11, Philippians 4:13, Romans 8:28, Proverbs 3:5–6, Psalm 23, Isaiah 41:10, Matthew 11:28, Philippians 4:6–7) are good and may be chosen when one truly fits — but do not reach for them by reflex. The Bible is large; when a less-quoted verse speaks to this situation more exactly, choose it.
 - Never invent or misattribute a verse. If unsure of an exact reference, choose one you are sure of.
 - Use Masoretic (Protestant) chapter and verse numbering; the server converts for Orthodox Psalters.
@@ -174,7 +189,8 @@ WRITING — voice and depth
 FORMAT
 Reply with ONLY a raw JSON object — no markdown, no backticks, nothing before or after:
 {"book":19,"chapter":34,"verse":18,"verseEnd":18,"context":"…","application":"…","prayer":"…"}
-"book" is 1–66 in canonical order (1 Genesis … 19 Psalms … 40 Matthew … 66 Revelation). "book", "chapter", "verse", "verseEnd" are JSON numbers. "verseEnd" equals "verse" for a single verse. All text fields are in ${language}.`;
+"book" is 1–66 in canonical order (1 Genesis … 19 Psalms … 40 Matthew … 66 Revelation). "book", "chapter", "verse", "verseEnd" are JSON numbers. "verseEnd" equals "verse" for a single verse. All text fields are in ${language}.
+${languageQualityNote(lang)}`;
 }
 
 const PROMPTS = new Proxy({}, { get: (_, lang) => systemPrompt(String(lang)) });
@@ -423,10 +439,13 @@ function buildUserMessage(query, lang, attempt, previousRawText) {
 async function requestModelSelection({ query, lang, attempt, previousRawText }) {
   const modelRequest = {
     model: MODEL,
-    max_tokens: 1024,
-    // Sonnet 5 runs adaptive thinking by default; disable it so the small
-    // max_tokens budget goes entirely to the JSON answer and latency stays low.
-    thinking: { type: 'disabled' },
+    max_tokens: 2400,
+    // Thinking on, at medium effort. Choosing the right verse is a
+    // judgement, and with thinking off the model took the first plausible
+    // one — "lonely" got the broken-hearted verse. A moment of
+    // deliberation before the JSON is worth the second or so it costs.
+    thinking: { type: 'adaptive' },
+    output_config: { effort: 'medium' },
     system: PROMPTS[lang] || PROMPTS.en,
     messages: [{
       role: 'user',
@@ -764,7 +783,8 @@ ${subject}. Write every field in ${languageName}.
 "application" — What this asks of the reader today. Warm, direct, second person. Do not be preachy or generic. 2-3 sentences.
 
 Reply with ONLY a raw JSON object, no markdown, no backticks:
-{"theological":"...","symbolic":"...","application":"..."}`;
+{"theological":"...","symbolic":"...","application":"..."}
+${languageQualityNote(lang)}`;
 }
 
 app.post('/interpret', async (req, res) => {
@@ -781,8 +801,9 @@ app.post('/interpret', async (req, res) => {
 
     const modelRequest = {
       model: MODEL,
-      max_tokens: scope === 'chapter' ? 2000 : 1400,
-      thinking: { type: 'disabled' },
+      max_tokens: scope === 'chapter' ? 3000 : 2200,
+      thinking: { type: 'adaptive' },
+      output_config: { effort: 'low' },
       system: buildInterpretPrompt(lang, scope),
       messages: [{
         role: 'user',
